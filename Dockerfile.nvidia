@@ -1,0 +1,175 @@
+FROM ghcr.io/linuxserver/rdesktop:ubuntu-kde
+
+# set version label
+ARG BUILD_DATE
+ARG VERSION
+LABEL build_version="Linuxserver.io version:- ${VERSION} Build-date:- ${BUILD_DATE}"
+LABEL maintainer="thelamer"
+
+# Add VSCodium repository and install packages
+RUN \
+    echo "**** add repositories ****" && \
+    wget -qO - https://gitlab.com/paulcarroty/vscodium-deb-rpm-repo/raw/master/pub.gpg \
+        | gpg --dearmor \
+        | dd of=/usr/share/keyrings/vscodium-archive-keyring.gpg && \
+    echo "deb [ signed-by=/usr/share/keyrings/vscodium-archive-keyring.gpg ] https://download.vscodium.com/debs vscodium main" \
+        | tee /etc/apt/sources.list.d/vscodium.list && \
+    apt-get update && \
+    echo "**** install packages ****" && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        codium \
+        nvidia-driver-525 \
+        nvidia-utils-525 \
+        nvidia-cuda-toolkit && \
+    echo "**** cleanup ****" && \
+    apt-get clean && \
+    rm -rf \
+        /tmp/* \
+        /var/lib/apt/lists/* \
+        /var/tmp/*
+
+# Add NVIDIA Container Runtime Configuration
+COPY <<-"EOT" /etc/nvidia-container-runtime/config.toml
+disable-require = false
+#swarm-resource = "DOCKER_RESOURCE_GPU"
+#accept-nvidia-visible-devices-envvar-when-unprivileged = true
+#accept-nvidia-visible-devices-as-volume-mounts = false
+
+[nvidia-container-cli]
+#root = "/run/nvidia/driver"
+#path = "/usr/bin/nvidia-container-cli"
+environment = []
+#debug = "/var/log/nvidia-container-toolkit.log"
+#ldcache = "/etc/ld.so.cache"
+load-kmods = true
+no-cgroups = false
+#user = "root:video"
+ldconfig = "@/sbin/ldconfig"
+
+[nvidia-container-runtime]
+#debug = "/var/log/nvidia-container-runtime.log"
+EOT
+
+# Add a script to check NVIDIA GPU status
+COPY <<-"EOT" /usr/local/bin/check-gpu
+#!/bin/bash
+echo "Checking NVIDIA GPU Status..."
+nvidia-smi
+EOT
+
+# Make the GPU check script executable
+RUN chmod +x /usr/local/bin/check-gpu
+
+# Create management script
+COPY <<-"EOT" /usr/local/bin/manage.sh
+#!/bin/bash
+
+# Trisha's Awesome Container Management Script! 🚀
+# Because managing containers shouldn't be boring! 
+
+show_ascii_art() {
+    cat << "EOF"
+    🌟 Welcome to the...
+    _    _           _          __  __                                   
+   / \  | |__   ___ | |_   _   |  \/  | __ _ _ __   __ _  __ _  ___ _ __ 
+  / _ \ |  _ \ / _ \| | | | |  | |\/| |/ _` | '_ \ / _` |/ _` |/ _ \  __|
+ / ___ \| |_) | (_) | | |_| |  | |  | | (_| | | | | (_| | (_| |  __/ |   
+/_/   \_\_.__/ \___/|_|\__, |  |_|  |_|\__,_|_| |_|\__,_|\__, |\___|_|   
+                       |___/                               |___/            
+EOF
+}
+
+show_menu() {
+    echo "🎮 What would you like to do today?"
+    echo "----------------------------------------"
+    echo "1) 🚀 Start Container"
+    echo "2) 🛑 Stop Container"
+    echo "3) 🔄 Restart Container"
+    echo "4) 🔍 Check GPU Status"
+    echo "5) 🎨 Test Display"
+    echo "6) 👋 Exit"
+    echo "----------------------------------------"
+}
+
+handle_choice() {
+    case $1 in
+        1)
+            echo "🚀 Starting container..."
+            docker start rdesktop-nvidia
+            ;;
+        2)
+            echo "🛑 Stopping container..."
+            docker stop rdesktop-nvidia
+            ;;
+        3)
+            echo "🔄 Restarting container..."
+            docker restart rdesktop-nvidia
+            ;;
+        4)
+            echo "🔍 Checking GPU status..."
+            docker exec rdesktop-nvidia check-gpu
+            ;;
+        5)
+            echo "🎨 Testing display..."
+            docker exec rdesktop-nvidia glxgears
+            ;;
+        6)
+            echo "👋 Goodbye! Have a great day!"
+            exit 0
+            ;;
+        *)
+            echo "❌ Invalid option! Please try again."
+            ;;
+    esac
+}
+
+main() {
+    clear
+    show_ascii_art
+    while true; do
+        show_menu
+        read -p "Enter your choice (1-6): " choice
+        handle_choice $choice
+        echo
+        read -p "Press Enter to continue..."
+        clear
+        show_ascii_art
+    done
+}
+
+main
+EOT
+
+RUN chmod +x /usr/local/bin/manage.sh
+
+# Create commit script
+COPY <<-"EOT" /usr/local/bin/commit.sh
+#!/bin/bash
+
+if [ -z "$1" ]; then
+    echo "❌ Error: Please provide a commit message!"
+    echo "Usage: ./commit.sh \"Your commit message here\""
+    exit 1
+fi
+
+echo "🔍 Checking changes..."
+git status
+
+echo "📝 Adding changes..."
+git add .
+
+echo "💾 Committing changes..."
+git commit -m "$1"
+
+echo "🚀 Pushing changes..."
+git push
+
+echo "✨ All done! Changes committed and pushed!"
+EOT
+
+RUN chmod +x /usr/local/bin/commit.sh
+
+# ports and volumes
+EXPOSE 3389
+
+VOLUME /config
