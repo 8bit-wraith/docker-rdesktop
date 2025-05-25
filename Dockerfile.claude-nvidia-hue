@@ -1,0 +1,231 @@
+FROM ghcr.io/linuxserver/baseimage-rdesktop:ubuntu-kde
+
+# set version label
+ARG BUILD_DATE
+ARG VERSION
+LABEL build_version="Claude CLI RDP with Nvidia (hue user) - version:- ${VERSION} Build-date:- ${BUILD_DATE}"
+LABEL maintainer="claude-cli-user"
+
+# Override the default abc user with hue
+ENV USER=hue
+ENV HOME=/home/hue
+
+# Install Nvidia drivers and tools
+RUN \
+  echo "**** install nvidia and development packages ****" && \
+  apt-get update && \
+  apt-get install -y --no-install-recommends \
+    # Nvidia utilities
+    nvidia-utils-535 \
+    nvidia-driver-535 \
+    nvidia-cuda-toolkit \
+    vulkan-tools \
+    mesa-vulkan-drivers \
+    # Development tools
+    build-essential \
+    git \
+    curl \
+    wget \
+    vim \
+    neovim \
+    tmux \
+    htop \
+    neofetch \
+    # Fun and useful apps
+    steam \
+    lutris \
+    discord \
+    obs-studio \
+    vlc \
+    mpv \
+    firefox \
+    chromium-browser \
+    # Terminal emulators
+    terminator \
+    alacritty \
+    kitty \
+    # Development environments
+    nodejs \
+    npm \
+    python3-pip \
+    golang \
+    rustc \
+    cargo \
+    # Audio enhancements
+    pulseaudio-equalizer \
+    pavucontrol \
+    # Eye candy
+    conky \
+    plank \
+    variety \
+    # Games and fun
+    supertuxkart \
+    0ad \
+    minetest && \
+  # Install Claude CLI
+  npm install -g @anthropic-ai/claude-cli && \
+  # Clean up
+  apt-get clean && \
+  rm -rf \
+    /tmp/* \
+    /var/lib/apt/lists/* \
+    /var/tmp/*
+
+# Install additional Python packages for AI/ML work
+RUN pip3 install --no-cache-dir \
+  torch \
+  torchvision \
+  tensorflow \
+  numpy \
+  pandas \
+  matplotlib \
+  jupyter \
+  ipython
+
+# Create hue user and setup
+RUN \
+  # Remove default abc user if exists
+  userdel -r abc 2>/dev/null || true && \
+  # Create hue user with same UID/GID structure
+  useradd -u 1000 -U -d /home/hue -s /bin/bash hue && \
+  usermod -G users,sudo hue && \
+  echo 'hue ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers && \
+  mkdir -p /home/hue && \
+  chown -R hue:hue /home/hue
+
+# Copy custom configurations
+COPY /root /
+
+# Create custom startup script for Nvidia
+RUN mkdir -p /etc/cont-init.d && \
+cat <<'EOF' > /etc/cont-init.d/50-nvidia-setup
+#!/usr/bin/with-contenv bash
+
+# Setup Nvidia environment
+if nvidia-smi > /dev/null 2>&1; then
+    echo "**** Nvidia GPU detected, configuring environment ****"
+    # Set Nvidia environment variables
+    export NVIDIA_VISIBLE_DEVICES=all
+    export NVIDIA_DRIVER_CAPABILITIES=all
+    export LIBGL_KOPPER_DRI2=1
+    export MESA_LOADER_DRIVER_OVERRIDE=zink
+    export GALLIUM_DRIVER=zink
+    export __GLX_VENDOR_LIBRARY_NAME=nvidia
+    export __VK_LAYER_NV_optimus=NVIDIA_only
+    
+    # Create Xorg config for Nvidia
+    nvidia-xconfig --no-xinerama --force-generate
+    
+    echo "**** Nvidia setup complete ****"
+else
+    echo "**** No Nvidia GPU detected ****"
+fi
+EOF
+
+# Create password initialization script
+RUN cat <<'EOF' > /etc/cont-init.d/51-password-setup
+#!/usr/bin/with-contenv bash
+
+# Set random password if provided
+if [ ! -z "$RDP_PASSWORD" ]; then
+    echo "**** Setting RDP password for user hue ****"
+    echo "hue:$RDP_PASSWORD" | chpasswd
+    
+    # Save password to file for display
+    mkdir -p /config
+    echo "RDP Credentials:" > /config/rdp-credentials.txt
+    echo "Username: hue" >> /config/rdp-credentials.txt
+    echo "Password: $RDP_PASSWORD" >> /config/rdp-credentials.txt
+    echo "Server: ${SERVICE_FQDN_CLAUDE_RDP_3389:-localhost}:3389" >> /config/rdp-credentials.txt
+    chmod 600 /config/rdp-credentials.txt
+    chown hue:hue /config/rdp-credentials.txt
+    
+    echo "**** RDP credentials saved to /config/rdp-credentials.txt ****"
+else
+    echo "**** No RDP_PASSWORD set, using default ****"
+fi
+
+# Fix home directory permissions
+chown -R hue:hue /home/hue
+EOF
+
+# Make scripts executable (including Claude setup from COPY)
+RUN chmod +x /etc/cont-init.d/*
+
+# Enhanced audio configuration
+RUN mkdir -p /etc/pulse/default.pa.d && \
+cat <<'EOF' > /etc/pulse/default.pa.d/10-better-audio.pa
+# Enhanced audio quality settings
+load-module module-udev-detect tsched=0
+load-module module-native-protocol-unix
+load-module module-bluetooth-policy
+load-module module-bluetooth-discover
+load-module module-equalizer-sink
+load-module module-dbus-protocol
+
+# Set better audio defaults
+set-default-sample-format s32le
+set-default-sample-rate 48000
+set-default-sample-channels 2
+set-default-channel-map front-left,front-right
+
+# Enable echo cancellation
+load-module module-echo-cancel use_master_format=1 aec_method=webrtc aec_args="analog_gain_control=0 digital_gain_control=1 noise_suppression=1 voice_detection=1" source_name=echocancel sink_name=echocancel1
+set-default-source echocancel
+set-default-sink echocancel1
+EOF
+
+# Create a fun welcome script
+RUN cat <<'EOF' > /usr/local/bin/claude-welcome
+#!/bin/bash
+clear
+echo "=============================================="
+echo "   Welcome to Claude CLI RDP Environment!"
+echo "=============================================="
+echo ""
+echo "👤 User: hue"
+echo "🔑 Password: Check /config/rdp-credentials.txt"
+echo "🚀 Nvidia GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo 'Not detected')"
+echo "🔊 Audio: PulseAudio with enhanced quality"
+
+# Check Claude CLI status
+if [ ! -z "$ANTHROPIC_API_KEY" ]; then
+    echo "🤖 Claude CLI: Configured and ready! ✅"
+    echo "   API Key: ${ANTHROPIC_API_KEY:0:10}...${ANTHROPIC_API_KEY: -4}"
+else
+    echo "🤖 Claude CLI: Not configured ⚠️"
+    echo "   Set ANTHROPIC_API_KEY or run 'claude auth login'"
+fi
+
+echo ""
+echo "Useful commands:"
+echo "  claude chat     - Start a chat with Claude"
+echo "  claude help     - Get help with any topic"
+echo "  nvidia-smi      - Check GPU status"
+echo "  htop            - System monitor"
+echo "  neofetch        - System info"
+echo ""
+
+# Show quick Claude example if configured
+if [ ! -z "$ANTHROPIC_API_KEY" ]; then
+    echo "Quick test: Try 'claude \"What can you help me with?\"'"
+    echo ""
+fi
+
+echo "Your credentials are in: /config/rdp-credentials.txt"
+echo ""
+echo "Have fun! 🎮"
+echo "=============================================="
+EOF
+
+RUN chmod +x /usr/local/bin/claude-welcome && \
+    echo "/usr/local/bin/claude-welcome" >> /etc/bash.bashrc
+
+# Update startwm script to use hue paths
+RUN sed -i 's|/home/abc|/home/hue|g' /defaults/startwm.sh 2>/dev/null || true
+
+# ports and volumes
+EXPOSE 3389
+
+VOLUME /config
+VOLUME /home/hue

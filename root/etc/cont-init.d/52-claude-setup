@@ -1,0 +1,118 @@
+#!/usr/bin/with-contenv bash
+
+# Auto-configure Claude CLI if API key is provided
+
+if [ ! -z "$ANTHROPIC_API_KEY" ]; then
+    echo "**** Configuring Claude CLI with API key ****"
+    
+    # Create config directory for hue user
+    mkdir -p /home/hue/.config/claude
+    
+    # Create Claude CLI config with the API key
+    cat > /home/hue/.config/claude/config.json <<EOF
+{
+  "api_key": "$ANTHROPIC_API_KEY",
+  "model": "claude-3-opus-20240229",
+  "max_tokens": 4096,
+  "temperature": 0.7,
+  "stream": true,
+  "theme": "monokai",
+  "save_history": true,
+  "history_file": "/home/hue/.config/claude/history.json"
+}
+EOF
+    
+    # Create a global config for all users
+    mkdir -p /etc/claude
+    cp /home/hue/.config/claude/config.json /etc/claude/config.json
+    
+    # Set proper permissions
+    chown -R hue:hue /home/hue/.config/claude
+    chmod 600 /home/hue/.config/claude/config.json
+    chmod 644 /etc/claude/config.json
+    
+    # Create a wrapper script to ensure Claude always uses the config
+    cat > /usr/local/bin/claude-configured <<'EOF'
+#!/bin/bash
+# Claude CLI wrapper with auto-configuration
+
+# Check if user has their own config, if not use the global one
+if [ ! -f "$HOME/.config/claude/config.json" ] && [ -f "/etc/claude/config.json" ]; then
+    mkdir -p "$HOME/.config/claude"
+    cp /etc/claude/config.json "$HOME/.config/claude/config.json"
+fi
+
+# Run Claude with all arguments passed through
+exec /usr/bin/claude "$@"
+EOF
+    
+    chmod +x /usr/local/bin/claude-configured
+    
+    # Create alias for all users
+    echo 'alias claude="/usr/local/bin/claude-configured"' >> /etc/bash.bashrc
+    
+    # Test the configuration
+    su - hue -c "claude --version" && echo "**** Claude CLI configured successfully! ****"
+    
+    # Add to welcome message
+    echo "" >> /config/rdp-credentials.txt
+    echo "Claude CLI Status: Configured and ready!" >> /config/rdp-credentials.txt
+    echo "Run 'claude chat' to start chatting" >> /config/rdp-credentials.txt
+    
+else
+    echo "**** No ANTHROPIC_API_KEY provided, Claude CLI not configured ****"
+    echo "**** Set ANTHROPIC_API_KEY environment variable to auto-configure ****"
+    
+    # Add to welcome message
+    echo "" >> /config/rdp-credentials.txt
+    echo "Claude CLI Status: Not configured" >> /config/rdp-credentials.txt
+    echo "Set ANTHROPIC_API_KEY env var or run 'claude auth login'" >> /config/rdp-credentials.txt
+fi
+
+# Create helpful Claude shortcuts on desktop
+mkdir -p /home/hue/Desktop
+
+# Claude Chat shortcut
+cat > /home/hue/Desktop/claude-chat.desktop <<'EOL'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Claude Chat
+Comment=Start a chat with Claude AI
+Exec=kitty -e bash -c "claude chat; exec bash"
+Icon=applications-internet
+Terminal=false
+Categories=Development;
+EOL
+
+# Claude Code Review shortcut
+cat > /home/hue/Desktop/claude-review.desktop <<'EOL'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Claude Code Review
+Comment=Review code with Claude AI
+Exec=kitty -e bash -c "echo 'Drag and drop a file or paste code to review:'; read -p 'File path: ' filepath; claude review \"$filepath\"; exec bash"
+Icon=applications-development
+Terminal=false
+Categories=Development;
+EOL
+
+# Claude Help shortcut
+cat > /home/hue/Desktop/claude-help.desktop <<'EOL'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Claude Help
+Comment=Get help with Claude CLI
+Exec=kitty -e bash -c "claude --help; echo; read -p 'Press Enter to continue...'; exec bash"
+Icon=help-browser
+Terminal=false
+Categories=Development;
+EOL
+
+# Set permissions and ownership
+chmod +x /home/hue/Desktop/*.desktop
+chown -R hue:hue /home/hue/Desktop
+
+echo "**** Claude CLI setup complete ****"

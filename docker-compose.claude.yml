@@ -1,0 +1,141 @@
+version: "3.8"
+
+services:
+  claude-rdp:
+    build:
+      context: .
+      dockerfile: Dockerfile.claude-nvidia
+      args:
+        BUILD_DATE: ${BUILD_DATE:-$(date +%Y%m%d)}
+        VERSION: ${VERSION:-latest}
+    image: claude-rdp:latest
+    container_name: claude-rdp
+    hostname: claude-desktop
+    
+    # Nvidia GPU support
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, compute, video, graphics, utility, display]
+    
+    environment:
+      # User/Group IDs
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TZ:-America/New_York}
+      
+      # Nvidia settings
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      
+      # Display settings
+      - DISPLAY=:1
+      - LC_ALL=en_US.UTF-8
+      
+      # Performance settings
+      - __GL_SYNC_TO_VBLANK=0
+      - __GL_SHADER_DISK_CACHE=1
+      - __GL_SHADER_DISK_CACHE_SIZE=10737418240
+      
+      # Claude API (optional - set your key here)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      
+      # Desktop customization
+      - DESKTOP_SESSION=plasma
+      
+    volumes:
+      # Docker socket for container management
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      
+      # User data and configs
+      - ./claude-config:/config
+      
+      # Shared folders
+      - ~/Documents:/home/abc/Documents
+      - ~/Downloads:/home/abc/Downloads
+      - ~/Pictures:/home/abc/Pictures
+      - ~/Videos:/home/abc/Videos
+      
+      # Game data (optional)
+      - ~/.steam:/home/abc/.steam
+      - ~/.local/share/lutris:/home/abc/.local/share/lutris
+      
+      # Development folders (optional)
+      - ~/projects:/home/abc/projects
+      
+      # X11 socket for GPU acceleration
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      
+      # DRI for GPU access
+      - /dev/dri:/dev/dri
+      
+    devices:
+      # GPU devices
+      - /dev/dri:/dev/dri
+      - /dev/nvidia0:/dev/nvidia0
+      - /dev/nvidiactl:/dev/nvidiactl
+      - /dev/nvidia-modeset:/dev/nvidia-modeset
+      - /dev/nvidia-uvm:/dev/nvidia-uvm
+      - /dev/nvidia-uvm-tools:/dev/nvidia-uvm-tools
+      
+      # Audio devices
+      - /dev/snd:/dev/snd
+      
+    ports:
+      # RDP port
+      - "3389:3389"
+      
+      # VNC port (backup access)
+      - "5900:5900"
+      
+      # Web-based noVNC (optional)
+      - "6080:6080"
+      
+      # SSH (for development)
+      - "2222:22"
+      
+    # Security options for GUI apps
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    
+    # Capabilities for hardware access
+    cap_add:
+      - SYS_ADMIN
+      - SYS_NICE
+      - NET_ADMIN
+    
+    # Shared memory for browsers and apps
+    shm_size: "4gb"
+    
+    # Runtime for Nvidia
+    runtime: nvidia
+    
+    # Network mode
+    network_mode: bridge
+    
+    # Restart policy
+    restart: unless-stopped
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "nvidia-smi"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+# Optional: Create a custom network
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# Volumes for persistence
+volumes:
+  claude-config:
+    driver: local
