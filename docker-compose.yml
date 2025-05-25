@@ -1,0 +1,35 @@
+services:
+  rdesktop-nvidia:
+    build:
+      context: .
+      dockerfile: Dockerfile.nvidia
+    container_name: rdesktop-nvidia
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=UTC
+      # RDP Configuration
+      - KEYBOARD=en-us-qwerty
+      - DISPLAY_WIDTH=1920
+      - DISPLAY_HEIGHT=1080
+    volumes:
+      - ./config:/config
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      # Optional: Docker socket for Docker-in-Docker support
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "3389:3389"
+    devices:
+      - /dev/dri:/dev/dri
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [compute,video,graphics,utility]
+    # Security options for modern GUI apps
+    security_opt:
+      - seccomp=unconfined
+    shm_size: 1gb
+    restart: unless-stopped
